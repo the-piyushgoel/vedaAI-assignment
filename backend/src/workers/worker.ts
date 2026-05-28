@@ -8,15 +8,30 @@ import { emitToAssignmentRoom } from '../socket/socket';
 export const initWorker = () => {
   const worker = new Worker(
     'question-generation',
-    async (job: Job) => {
-      const { assignmentId } = job.data;
-      console.log(`Processing background job ${job.id} for assignment: ${assignmentId}`);
 
-      const updateProgress = async (progress: number, message: string) => {
+    async (job: Job) => {
+
+      console.log("================================");
+      console.log("WORKER STARTED");
+
+      const { assignmentId } = job.data;
+
+      console.log(
+        `Processing background job ${job.id} for assignment: ${assignmentId}`
+      );
+
+      const updateProgress = async (
+        progress: number,
+        message: string
+      ) => {
+
+        console.log(`PROGRESS ${progress}% -> ${message}`);
+
         await Assignment.findByIdAndUpdate(assignmentId, {
           progress,
           progressMessage: message
         });
+
         emitToAssignmentRoom(assignmentId, 'generation-progress', {
           assignmentId,
           progress,
@@ -25,74 +40,154 @@ export const initWorker = () => {
       };
 
       try {
+
         const assignment = await Assignment.findById(assignmentId);
+
         if (!assignment) {
-          throw new Error(`Assignment with ID ${assignmentId} not found`);
+          throw new Error(
+            `Assignment with ID ${assignmentId} not found`
+          );
         }
+
+        console.log("ASSIGNMENT FOUND");
 
         // Set status to processing
         assignment.status = 'processing';
+
         await assignment.save();
-        emitToAssignmentRoom(assignmentId, 'generation-started', { assignmentId });
 
-        await updateProgress(10, 'Initializing queue worker...');
+        emitToAssignmentRoom(
+          assignmentId,
+          'generation-started',
+          { assignmentId }
+        );
+
+        await updateProgress(
+          10,
+          'Initializing queue worker...'
+        );
+
         await new Promise(r => setTimeout(r, 1000));
 
-        await updateProgress(30, 'Uploading and parsing criteria...');
+        await updateProgress(
+          30,
+          'Uploading and parsing criteria...'
+        );
+
         await new Promise(r => setTimeout(r, 1000));
 
-        await updateProgress(50, 'Generating AI questions via OpenAI...');
+        await updateProgress(
+          50,
+          'Generating AI questions via OpenAI...'
+        );
+
         const prompt = buildOpenAIPrompt(
           assignment.subject,
           assignment.questionTypes,
           assignment.additionalInstructions
         );
 
-        const totalMarks = assignment.questionTypes.reduce((sum, t) => sum + (t.count * t.marks), 0);
-        const result = await generateExamPaper(prompt, totalMarks);
+        const totalMarks =
+          assignment.questionTypes.reduce(
+            (sum, t) => sum + (t.count * t.marks),
+            0
+          );
 
-        await updateProgress(80, 'Structuring paper sections and difficulty levels...');
+        console.log("CALLING OPENAI");
+
+        const result = await generateExamPaper(
+          prompt,
+          totalMarks
+        );
+
+        console.log("OPENAI RESPONSE RECEIVED");
+
+        await updateProgress(
+          80,
+          'Structuring paper sections and difficulty levels...'
+        );
+
         await new Promise(r => setTimeout(r, 1000));
 
-        await updateProgress(95, 'Finalizing exam paper structure...');
+        await updateProgress(
+          95,
+          'Finalizing exam paper structure...'
+        );
+
         await new Promise(r => setTimeout(r, 500));
 
         // Save complete result
         assignment.status = 'completed';
+
         assignment.progress = 100;
+
         assignment.progressMessage = 'Completed';
+
         assignment.result = result;
+
         await assignment.save();
 
-        emitToAssignmentRoom(assignmentId, 'generation-completed', {
+        emitToAssignmentRoom(
           assignmentId,
-          assignment
-        });
-        console.log(`Job successfully finished for assignment: ${assignmentId}`);
+          'generation-completed',
+          {
+            assignmentId,
+            assignment
+          }
+        );
+
+        console.log(
+          `JOB SUCCESSFULLY FINISHED FOR ASSIGNMENT: ${assignmentId}`
+        );
+
       } catch (error) {
-        console.error(`Error processing job for assignment ${assignmentId}:`, error);
-        const errMsg = (error as Error).message || 'Generation failed';
 
-        await Assignment.findByIdAndUpdate(assignmentId, {
-          status: 'failed',
-          progressMessage: errMsg
-        });
+        console.error(
+          `ERROR PROCESSING JOB FOR ASSIGNMENT ${assignmentId}:`,
+          error
+        );
 
-        emitToAssignmentRoom(assignmentId, 'generation-failed', {
+        const errMsg =
+          (error as Error).message || 'Generation failed';
+
+        await Assignment.findByIdAndUpdate(
           assignmentId,
-          error: errMsg
-        });
+          {
+            status: 'failed',
+            progressMessage: errMsg
+          }
+        );
+
+        emitToAssignmentRoom(
+          assignmentId,
+          'generation-failed',
+          {
+            assignmentId,
+            error: errMsg
+          }
+        );
 
         throw error;
       }
     },
-    { connection: redisConnectionOptions }
+
+    {
+      connection: redisConnectionOptions
+    }
   );
 
   worker.on('failed', (job, err) => {
-    console.error(`Job ${job?.id} failed with error:`, err);
+
+    console.error(
+      `JOB ${job?.id} FAILED WITH ERROR:`,
+      err
+    );
+
   });
 
-  console.log('BullMQ Worker initialized and listening on queue.');
+  console.log(
+    'BullMQ Worker initialized and listening on queue.'
+  );
+
   return worker;
 };
